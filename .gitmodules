@@ -1,0 +1,6 @@
+[submodule "anomalib"]
+	path = anomalib
+	url = https://github.com/thebeo2004/anomalib.git
+[submodule "detrex"]
+	path = detrex
+	url = https://github.com/thebeo2004/detrex.git
