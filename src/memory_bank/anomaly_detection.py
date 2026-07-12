@@ -149,25 +149,25 @@ def init_anatomy_segmentation_model(device):
     
     return seg_model
 
-def get_args_parser(add_help=True):
-    parser = argparse.ArgumentParser(description="Anomaly Detection Inference Script", add_help=add_help)
-    parser.add_argument("--raddino_checkpoint_path", type=str, required=True, help="Path to the pre-trained RadDINO model checkpoint (e.g., 'raddino_pretrained.pth').")
-    parser.add_argument("--memory_bank_path", type=str, required=True, help="Path to the saved memory bank tensor (e.g., 'raddino_memory_bank.pt').")
-    parser.add_argument("--input_image_path", type=str, required=True, help="Path to the input image for anomaly detection (e.g., 'test_image.png').")
-    return parser
+# def get_args_parser(add_help=True):
+#     parser = argparse.ArgumentParser(description="Anomaly Detection Inference Script", add_help=add_help)
+#     parser.add_argument("--raddino_checkpoint_path", type=str, required=True, help="Path to the pre-trained RadDINO model checkpoint (e.g., 'raddino_pretrained.pth').")
+#     parser.add_argument("--memory_bank_path", type=str, required=True, help="Path to the saved memory bank tensor (e.g., 'raddino_memory_bank.pt').")
+#     parser.add_argument("--input_image_path", type=str, required=True, help="Path to the input image for anomaly detection (e.g., 'test_image.png').")
+#     return parser
 
-if __name__ == "__main__":
-    args = get_args_parser().parse_args()
+# if __name__ == "__main__":
+#     args = get_args_parser().parse_args()
     
-    model, device = init_anomaly_model_for_inference(args.raddino_checkpoint_path, args.memory_bank_path)
+#     model, device = init_anomaly_model_for_inference(args.raddino_checkpoint_path, args.memory_bank_path)
     
-    image = cv2.imread(args.input_image_path, cv2.IMREAD_GRAYSCALE)
-    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)  # Convert to 3-channel RGB
+#     image = cv2.imread(args.input_image_path, cv2.IMREAD_GRAYSCALE)
+#     image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)  # Convert to 3-channel RGB
     
-    transform = get_valid_transform()
-    image = transform(image=image, bboxes=[], labels=[])['image']  # Apply the same transformations used during memory bank construction to ensure consistency
+#     transform = get_valid_transform()
+#     image = transform(image=image, bboxes=[], labels=[])['image']  # Apply the same transformations used during memory bank construction to ensure consistency
     
-    anomaly_map, image_score = run_inference(model, device, image)
+#     anomaly_map, image_score = run_inference(model, device, image)
     
-    print(f"Anomaly Score: {image_score}")
-    # You can also visualize the anomaly map as needed
+#     print(f"Anomaly Score: {image_score}")
+#     # You can also visualize the anomaly map as needed
