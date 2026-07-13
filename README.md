@@ -1,765 +1,359 @@
 # AMBER: Anatomy-aware Memory Banks for Efficient Radiographic Anomaly Detection
 
-<!-- <div align="center">
+AMBER is the publication name of the project previously referred to in code and notebooks as AnomalyRadDINO. The two implementation variants are:
 
-**Few-shot Chest X-ray Anomaly Detection with Medical Foundation Models**
+- AMBER v1: global memory bank, without anatomy-aware memory partitioning
+- AMBER v2: AMBER with AAMB, where AAMB stands for Anatomy-Aware Memory Banking
 
-<!-- [![arXiv](https://img.shields.io/badge/arXiv-2406.xxxxx-b31b1b.svg)](https://arxiv.org/)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch 2.13+](https://img.shields.io/badge/PyTorch-2.13+-ee4c2c.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-[**Paper**](./main.md) • [**Datasets**](#datasets) • [**Benchmarks**](#results) • [**Quick Start**](#quick-start) -->
-<!-- 
-</div> --> 
-
-
-
-## 📋 Table of Contents
+The goal of this repository is reproducibility. The code, notebooks, datasets, and checkpoints are organized so readers can rebuild the memory banks, run inference, reproduce the ablations, and verify the benchmarking results reported in the scientific report.
+## Table of Contents
 
 1. [Overview](#overview)
-2. [Key Contributions](#key-contributions)
-3. [Installation](#installation)
-4. [Quick Start](#quick-start)
-5. [Datasets](#datasets)
+2. [Repository Layout](#repository-layout)
+3. [Environment Setup](#environment-setup)
+4. [Data and Pretrained Assets](#data-and-pretrained-assets)
+5. [Reproduction Workflow](#reproduction-workflow)
 6. [Memory Bank Construction](#memory-bank-construction)
 7. [Inference](#inference)
-8. [Evaluation & Analysis](#evaluation--analysis)
+8. [Evaluation and Benchmarking](#evaluation-and-benchmarking)
 9. [Notebooks Guide](#notebooks-guide)
-<!-- 10. [Results](#results)
-11. [Computational Complexity](#computational-complexity)
-12. [Citation](#citation) -->
+10. [Computational Complexity](#computational-complexity)
+11. [Citation](#citation)
 
----
+## Overview
 
-## 🔬 Overview
+AMBER is a few-shot unsupervised anomaly detection framework for chest X-ray imaging. It uses a frozen radiology foundation model, RadDINO, to extract patch-level features from normal reference images, stores those features in a memory bank, and scores test images by nearest-neighbor retrieval.
 
-**AMBER** (**A**natomy-aware **M**emory **B**anks for **E**fficient **R**adiographic anomaly detection) is a few-shot unsupervised anomaly detection framework for Chest X-ray (CXR) imaging. 
+The key idea is anatomical structure. Instead of one global memory bank, AMBER v2 splits the normal reference features into organ-specific sub-banks and restricts retrieval to the anatomies that correspond to the query patch. This reduces cross-anatomical semantic mismatch, which is especially important in CXR where lung, heart, diaphragm, mediastinum, and clavicle regions have very different normal appearances.
 
-### The Problem
+The repository contains both the implementation and the reproducibility material needed to follow the paper end to end:
 
-Conventional memory-bank-based anomaly detection methods organize normal reference features in a **global memory bank**, allowing query patches to retrieve neighbors from any anatomical region. This causes *cross-anatomical semantic mismatch*: 
-- A patch from the **lung** might be compared against normal features from the **heart** or **mediastinum**
-- This introduces noise and reduces anomaly detection reliability, especially in few-shot settings
+- source code in [src/](src)
+- step-by-step notebooks in [notebook/anomaly_detection/](notebook/anomaly_detection)
+- benchmark results under [notebook/anomaly_detection/benchmarking/](notebook/anomaly_detection/benchmarking)
 
-### The Solution: AMBER
+## Repository Layout
 
-Instead of a single global bank, AMBER introduces **Anatomy-Aware Memory Banking (AAMB)**:
+- [src/utils.py](src/utils.py): RadDINO checkpoint conversion, preprocessing transforms, and annotation helpers
+- [src/memory_bank/build_memory.py](src/memory_bank/build_memory.py): memory bank construction for AMBER v1 and v2
+- [src/memory_bank/anomaly_detection.py](src/memory_bank/anomaly_detection.py): model initialization and single-image inference helpers
+- [src/memory_bank/binary_classification.py](src/memory_bank/binary_classification.py): dataset-level inference for normal vs abnormal evaluation
+- [src/memory_bank/anomaly_raddino.py](src/memory_bank/anomaly_raddino.py): AMBER v1 model definition
+- [src/memory_bank/anomaly_raddino_v2.py](src/memory_bank/anomaly_raddino_v2.py): AMBER v2 model definition with AAMB
+- [src/memory_bank/cxr_dataset.py](src/memory_bank/cxr_dataset.py): normal-image dataset for memory construction
+- [src/memory_bank/binary_cxr_dataset.py](src/memory_bank/binary_cxr_dataset.py): paired normal/abnormal dataset for inference
+- [src/memory_bank/utils.py](src/memory_bank/utils.py): anatomy merging, mask loading, visualization, and analysis utilities
+- [notebook/anomaly_detection/](notebook/anomaly_detection): notebooks for data exploration, memory construction, inference, ablations, benchmarking, complexity, and failure analysis
+- [detrex/](detrex) and [anomalib/](anomalib): vendored submodules required by the implementation
 
-1. **Anatomical Decomposition**: Normal reference features are organized into **5 organ-specific sub-banks**:
-   - Clavicle, Lung, Heart, Diaphragm, Mediastinum
+## Environment Setup
 
-2. **Anatomy-Restricted Retrieval**: Each query patch is matched only against the sub-bank from its anatomical region
+AMBER is developed for Python 3.12+ with PyTorch 2.13+ and CUDA 11.8+ recommended.
 
-3. **Independent Coreset Compression**: Each sub-bank is compressed using K-Center Greedy, reducing memory footprint by ~30% while preserving discriminative normal variations
-
-4. **Foundation Model Backbone**: Uses frozen **RadDINO** (medical self-supervised ViT-B/16) for strong CXR feature extraction
-
----
-
-## 🎯 Key Contributions
-
-1. **AMBER Framework**: An anatomy-conditioned memory-retrieval architecture for few-shot CXR anomaly detection using frozen foundation model features
-
-2. **Anatomy-Aware Memory Bank (AAMB) Mechanism**: Organizes normal patches into organ-specific sub-banks with restricted nearest-neighbor retrieval to anatomically relevant references
-
-3. **Region-wise Coreset Compression**: Independent K-Center Greedy compression per anatomical region, improving scalability while maintaining discriminative normal variation
-
-4. **Comprehensive Benchmarking**: Systematic evaluation on **VinDr-CXR** and **RSNA** under **MedIAnomaly** and **BMAD** protocols, with:
-   - Few-shot performance analysis (N ∈ {1, 5, 10, 20, 50+})
-   - Controlled ablations of AAMB
-   - Computational cost analysis
-   - Failure case analysis
-
----
-
-## 🔧 Installation
-
-### Prerequisites
-
-- Python 3.12+
-- PyTorch 2.13+
-- CUDA 11.8+ (GPU recommended)
-
-### Step 1: Clone Repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/uet-dis/AMBER.git
 git submodule update --init --recursive
 ```
 
-### Step 2: Install Dependencies
+### 2. Install dependencies
 
-We use `uv` for fast dependency resolution. If not installed:
+Use `uv` for dependency management:
+
 ```bash
 pip install uv
+uv sync
 ```
 
-Then install all packages in order:
+The repository also depends on the local `detrex` and `anomalib` submodules. Install them in this order:
 
 ```bash
-# Install main dependencies
-uv sync
-
-# Install Detectron2 (for Detrex backbone support)
 cd detrex/detectron2
 uv pip install -e . --no-build-isolation
 cd ../..
 
-# Install Detrex (Detection Transformers)
 cd detrex
 uv pip install -e . --no-build-isolation
 cd ..
 
-# Install Anomalib (for anomaly detection components)
 cd anomalib
 uv pip install -e . --no-build-isolation
 cd ..
 ```
 
-<!-- ### Verification
+### 3. Optional verification
+
+If you want a quick sanity check, run a small import test after installation:
 
 ```python
 import torch
-import torchxrayvision as xrv
-from src.memory_bank.anomaly_raddino import AnomalyRadDINO
-from src.memory_bank.anomaly_raddino_v2 import AnomalyRadDINOv2
-
-print(f"PyTorch version: {torch.__version__}")
-print(f"CUDA available: {torch.cuda.is_available()}")
-print("Installation successful!")
-``` -->
-
----
-
-## 🚀 Quick Start
-
-### 1. Download Pre-trained Models
-
-**RadDINO Foundation Model** (ViT-B/16, already adapted from ViT-B/14):
-```python
 from src.utils import load_raddino
 
-# Option A: Download converted checkpoint from Kaggle
-# https://www.kaggle.com/models/thebeo182004/raddino-vitb14-topad16
-raddino_ckpt_path = "path/to/rad_dino_vitb14_detrex_ready.pth"
-raddino = load_raddino(raddino_ckpt_path)
+print(torch.__version__)
+print(torch.cuda.is_available())
 ```
 
-**Anatomy Segmentation Model** (PSPNet, from torchxrayvision):
-```python
-from src.memory_bank.anomaly_detection import init_anatomy_segmentation_model
+## Data and Pretrained Assets
 
-seg_model = init_anatomy_segmentation_model(device='cuda:0')
-```
+AMBER is evaluated on the following benchmarks:
 
-### 2. Build Memory Bank
+- [MedIAnomaly VinDrCXR 1024 x 1024](https://www.kaggle.com/datasets/thebeo182004/medanomaly-vindrcxr/data)
+- [MedIAnomaly RSNA 1024 x 1024](https://www.kaggle.com/datasets/thebeo182004/medianomaly-rsna/data)
+- [BMAD-RSNA-1024](https://www.kaggle.com/code/thebeo182004/bmad-rsna/output)
+
+The Kaggle copies of these datasets are mirrors of the original benchmark releases used in the the following papers [MedIAnomaly](https://www.sciencedirect.com/science/article/abs/pii/S1361841525000489), [BMAD](https://openaccess.thecvf.com/content/CVPR2024W/VAND/papers/Bao_BMAD_Benchmarks_for_Medical_Anomaly_Detection_CVPRW_2024_paper.pdf). They are provided for convenience so readers can reproduce preprocessing and experiment organization more easily.
+
+The corresponding anatomy-mask resources used for AMBER v2 are:
+
+- [MedIAnomaly-VinDrCXR-Anatomy-Maps](https://www.kaggle.com/code/thebeo182004/medianomaly-vindrcxr-anatomy-maps/notebook)
+- [MedIAnomaly-RSNA-Anatomy-Maps](https://www.kaggle.com/code/thebeo182004/medianomaly-rsna-anatomy-maps)
+- [BMAD-RSNA-Anatomy-Maps](https://www.kaggle.com/code/thebeo182004/medianomaly-rsna-anatomy-maps)
+
+These masks follow the torchxrayvision anatomy convention and are required for AAMB training. For the dataset setup and anatomical analysis workflow, see [notebook/anomaly_detection/0.0 AD dataset visualization.ipynb](notebook/anomaly_detection/0.0%20AD%20dataset%20visualization.ipynb), [notebook/anomaly_detection/0.1 torchxrayvision - Overview.ipynb](notebook/anomaly_detection/0.1%20torchxrayvision%20-%20Overview.ipynb), and [notebook/anomaly_detection/0.3 VinDrCXR anatomical analysis.ipynb](notebook/anomaly_detection/0.3%20VinDrCXR%20anatomical%20analysis.ipynb).
+
+### RadDINO checkpoint
+
+AMBER uses RadDINO as the frozen feature extractor. The public model is available as [microsoft/rad-dino](https://huggingface.co/microsoft/rad-dino) on Hugging Face, but the original architecture is ViT-B/14 and was pretrained at 518 x 518 resolution.
+
+Because the CXR benchmarks in this project use 1024 x 1024 images and the implementation expects a ViT-B/16 compatible backbone, the checkpoint must be converted before use. There are two supported options:
+
+1. Convert locally with [src/utils.py](src/utils.py), using `convert_rad_dino_for_detrex`
+2. Use the authors' pre-converted checkpoint distributed on Kaggle: [RadDINO_ViTB14_ToPad16](https://www.kaggle.com/models/thebeo182004/raddino-vitb14-topad16)
+
+In both cases, the checkpoint passed to `--raddino_checkpoint_path` must be the converted ViT-B/16 version.
+
+## Reproduction Workflow
+
+The recommended workflow is:
+
+1. Prepare the environment and install dependencies
+2. Select a benchmark and download the image data and anatomy masks
+3. Build the memory bank with AMBER v1 or AMBER v2
+4. Run inference on the validation or test split
+5. Reproduce the benchmark tables, ablations, and failure analysis from the notebooks
+
+The notebooks provide the most direct guided path through the implementation. The corresponding scripts in [src/](src) are the executable version of the same workflow.
+
+## Memory Bank Construction
+
+The memory-bank pipeline is implemented in [src/memory_bank/build_memory.py](src/memory_bank/build_memory.py). It builds a reference bank from healthy samples and optionally splits the bank into anatomy-specific sub-banks for AAMB.
+
+### Command line usage
+
+AMBER v1, global memory bank:
 
 ```bash
 python src/memory_bank/build_memory.py \
-  --raddino_checkpoint_path "path/to/rad_dino_vitb14_detrex_ready.pth" \
-  --train_normal_data_dir "path/to/normal_train_dir" \
-  --save_path "path/to/raddino_memory_bank.pt" \
-  --subsampling_ratio 0.05 \
-  --batch_size 32 \
-  --normal_num 1000 \
-  --seed 0 \
-  --use_aamb \
-  --anatomy_dir "path/to/anatomy_mask_dir"
-```
-
-### 3. Run Inference with AAMB (AMBER v2 - with Anatomy-Aware Memory Banks)
-
-```python
-from src.memory_bank.binary_classification import binary_classification_inference_aamb
-
-true_labels, anomaly_scores = binary_classification_inference_aamb(
-    raddino_checkpoint_path="path/to/rad_dino_vitb14_detrex_ready.pth",
-    memory_bank_path="path/to/aamb_memory_bank.pt",
-    normal_paths=["path/to/normal1.jpg", ...],
-    abnormal_paths=["path/to/abnormal1.jpg", ...],
-    num_neighbours=[1, 2, 4, 8, 10, 15, 20],
-    batch_size=16,
-    active_anatomies=['Lung', 'Heart']  # Optional: restrict to specific organs
-)
-```
-
----
-
-## 📊 Datasets
-
-AMBER is evaluated on two medical imaging benchmarks with standardized protocols:
-
-### 1. **MedIAnomaly** Benchmark
-
-Converts existing CXR datasets into few-shot anomaly detection protocols:
-
-#### VinDr-CXR (MedIAnomaly)
-- **Size**: ~6000 images (1024×1024), 4000 trainings and 2000 testings
-- **Split**: N={1,5,10,20, 50, 100, 250, 500, 1000, 1500, 2000} normal references + validation/test abnormal samples
-- **Kaggle**: [medanomaly_vindrcxr_1024](https://www.kaggle.com/datasets/thebeo182004/medanomaly-vindrcxr/data)
-- **Anatomy Masks**: [MedIAnomaly-VinDrCXR-Anatomy-Maps](https://www.kaggle.com/code/thebeo182004/medianomaly-vindrcxr-anatomy-maps/notebook)
-
-#### RSNA (MedIAnomaly)
-- **Size**: ~5851 images (1024×1024), 3851 trainings and 2000 testings
-- **Split**: N={1,5,10,20, 50+} normal references + validation/test pneumonia samples
-- **Kaggle**: [MedIAnomaly-RSNA-1024](https://www.kaggle.com/datasets/thebeo182004/medianomaly-rsna/data)
-- **Anatomy Masks**: [MedIAnomaly-RSNA-Anatomy-Maps](https://www.kaggle.com/code/thebeo182004/medianomaly-rsna-anatomy-maps)
-
-### 2. **BMAD** Benchmark (Med-Anomalies)
-
-- **Size**: ~26684 images (1024×1024), 8000 trainings, 1490 validations and 17194 testings
-- **Protocol**: Few-shot protocol with standardized train/val/test splits
-- **Kaggle**: [BMAD-RSNA-1024](https://www.kaggle.com/code/thebeo182004/bmad-rsna/output)
-- **Anatomy Masks**: [BMAD-RSNA-Anatomy-Maps](https://www.kaggle.com/code/thebeo182004/medianomaly-rsna-anatomy-maps)
-
-> **Note**: Datasets are extracted from original research ([MedIAnomaly](https://www.sciencedirect.com/science/article/abs/pii/S1361841525000489), [BMAD](https://openaccess.thecvf.com/content/CVPR2024W/VAND/papers/Bao_BMAD_Benchmarks_for_Medical_Anomaly_Detection_CVPRW_2024_paper.pdf)) and hosted on Kaggle for convenient preprocessing and organization. They are identical to the original benchmark releases.
-
----
-
-## 🏗️ Memory Bank Construction
-
-### Overview
-
-Memory banks store compressed normal patch features for k-NN based anomaly scoring. AMBER provides two variants:
-
-| Variant | Features | Use Case |
-|---------|----------|----------|
-| **v1 (Standard)** | Single global memory bank | Baseline |
-| **v2 (AAMB)** | 5 organ-specific sub-banks | Better anatomy-aware detection |
-
-### Step-by-step Memory Bank Building
-
-#### A. Prepare Data
-
-```bash
-# Directory structure required:
-normal_train_dir/
-├── img_001.jpg
-├── img_002.jpg
-└── ...
-
-# For AAMB, also need anatomy masks:
-anatomy_masks_dir/
-├── img_001.npz  # Binary masks for 14 anatomies
-├── img_002.npz
-└── ...
-```
-
-**Generate anatomy masks** (see [Notebook 0.2](notebook/anomaly_detection/0.2%20torchxrayvision%20-%20Anatomy%20segmentation.ipynb)): You could use the available anatomy masks we provide on Kaggle (as we indicate above).
-
-
-#### B. Build Memory Bank (AMBER v1)
-
-```bash
-python src/memory_bank/build_memory.py \
-  --raddino_checkpoint_path "path/to/rad_dino_vitb14_detrex_ready.pth" \
-  --train_normal_data_dir "path/to/normal_train_dir" \
-  --save_path "path/to/raddino_memory_bank.pt" \
+  --raddino_checkpoint_path path/to/rad_dino_vitb14_detrex_ready.pth \
+  --train_normal_data_dir path/to/normal_train_dir \
+  --save_path path/to/raddino_memory_bank.pt \
   --subsampling_ratio 0.05 \
   --batch_size 32 \
   --normal_num 1000 \
   --seed 0
 ```
 
-**Parameters Explained**:
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--raddino_checkpoint_path` | **Required** | Path to **ViT-B/16 converted** RadDINO checkpoint (see `convert_rad_dino_for_detrex` in [src/utils.py](src/utils.py)) or pre-converted from [Kaggle](https://www.kaggle.com/models/thebeo182004/raddino-vitb14-topad16) |
-| `--train_normal_data_dir` | **Required** | Directory containing healthy CXR reference images (PNG/JPG) |
-| `--save_path` | `raddino_memory_bank.pt` | Output path for the compressed memory bank tensor |
-| `--subsampling_ratio` | `0.05` | Coreset ratio: retain 5% of patches via K-Center Greedy. Lower = smaller bank, faster inference |
-| `--batch_size` | `32` | Batch size for feature extraction. Adjust based on GPU VRAM |
-| `--normal_num` | `1000` | Maximum number of normal images to use. Use all if `len(normal_dir) < normal_num` |
-| `--seed` | `0` | Random seed for reproducibility |
-
-#### C. Build Memory Bank with AAMB (AMBER v2)
+AMBER v2, anatomy-aware memory banks:
 
 ```bash
 python src/memory_bank/build_memory.py \
-  --raddino_checkpoint_path "path/to/rad_dino_vitb14_detrex_ready.pth" \
-  --train_normal_data_dir "path/to/normal_train_dir" \
-  --anatomy_dir "path/to/anatomy_masks_dir" \
-  --save_path "path/to/aamb_memory_bank.pt" \
+  --raddino_checkpoint_path path/to/rad_dino_vitb14_detrex_ready.pth \
+  --train_normal_data_dir path/to/normal_train_dir \
+  --anatomy_dir path/to/anatomy_mask_dir \
+  --save_path path/to/aamb_memory_bank.pt \
   --subsampling_ratio 0.05 \
   --batch_size 16 \
   --use_aamb \
   --seed 0
 ```
 
-**Additional AAMB Parameters**:
+### Parameters explained
 
-| Parameter | Description |
-|-----------|-------------|
-| `--use_aamb` | **Flag**: Enable Anatomy-Aware Memory Banking (5 separate sub-banks) |
-| `--anatomy_dir` | **Required with `--use_aamb`**. Directory with `.npz` files containing binary anatomy masks. Mask order must match torchxrayvision definition (14 anatomies) |
+`--raddino_checkpoint_path`
+: Path to the converted RadDINO checkpoint in ViT-B/16 format. This is required for both v1 and v2.
 
-**Output**: `aamb_memory_bank.pt` containing state_dict with 5 memory banks:
-```python
-torch.load("aamb_memory_bank.pt")
-# Dict keys: 'memory_bank_0' (Clavicle), 'memory_bank_1' (Lung), 
-#            'memory_bank_2' (Heart), 'memory_bank_3' (Diaphragm), 'memory_bank_4' (Mediastinum)
-```
+`--train_normal_data_dir`
+: Directory containing healthy reference images used to build the memory bank. This directory should contain the normal training split only.
 
-#### D. Understanding Coreset Compression
+`--anatomy_dir`
+: Directory containing offline anatomy-mask files in `.npz` format. This is required only when `--use_aamb` is enabled. Each mask file must have the same stem as the corresponding image file, and the mask channel order must follow the torchxrayvision anatomy definition.
 
-**K-Center Greedy** selects maximally distant subset of features:
+`--save_path`
+: Output path for the constructed memory bank.
 
-```
-Original bank size: N patches
-Coreset ratio p: 0.05
-Final bank size: 0.05 × N patches
-```
+`--subsampling_ratio`
+: Coreset ratio used by K-Center Greedy. Smaller values reduce memory and inference cost, but can reduce retrieval coverage.
 
-**Trade-offs**:
-- **p = 1.0** (100%): Full reference set, slower inference (~2000+ GFLOPs), larger memory
-- **p = 0.05** (5%): Aggressive compression (~50-100 GFLOPs), fast inference
-- **p = 0.1-0.2**: Recommended for good accuracy/speed balance
+`--batch_size`
+: Batch size used during feature extraction.
 
-See [Notebook 3.0](notebook/anomaly_detection/3.0%20Computational%20complexity%20report.ipynb) for empirical complexity analysis.
+`--normal_num`
+: Maximum number of normal reference images to use when building the memory bank.
 
----
+`--seed`
+: Random seed for reproducible subset selection.
 
-## 🔍 Inference
+`--use_aamb`
+: Enables AMBER v2. When this flag is set, the model uses anatomy-aware sub-banks rather than a single global bank.
 
-### AMBER v1: Standard Global Memory Bank
+### Memory bank outputs
+
+AMBER v1 saves a single tensor to `raddino_memory_bank.pt`.
+
+AMBER v2 saves a dictionary containing one memory bank per selected anatomy. The keys are:
+
+- `memory_bank_0`: Clavicle
+- `memory_bank_1`: Lung
+- `memory_bank_2`: Heart
+- `memory_bank_3`: Facies Diaphragmatica
+- `memory_bank_4`: Mediastinum
+
+### Recommended notebooks
+
+- [notebook/anomaly_detection/1.0 AnomalyRadDINOv1 - Build memory.ipynb](notebook/anomaly_detection/1.0%20AnomalyRadDINOv1%20-%20Build%20memory.ipynb)
+- [notebook/anomaly_detection/1.1 AnomalyRadDINOv2 - Build memory.ipynb](notebook/anomaly_detection/1.1%20AnomalyRadDINOv2%20-%20Build%20memory.ipynb)
+
+Those notebooks show the same pipeline as the script, but with commentary and intermediate visual checks.
+
+## Inference
+
+The inference utilities are implemented in [src/memory_bank/binary_classification.py](src/memory_bank/binary_classification.py) and [src/memory_bank/anomaly_detection.py](src/memory_bank/anomaly_detection.py).
+
+### AMBER v1 inference
+
+Use `binary_classification_inference` for the global memory-bank variant:
 
 ```python
 from src.memory_bank.binary_classification import binary_classification_inference
 
-# Simple interface: returns true labels and anomaly scores
 true_labels, predicted_scores = binary_classification_inference(
     raddino_checkpoint_path="path/to/rad_dino_vitb14_detrex_ready.pth",
     memory_bank_path="path/to/raddino_memory_bank.pt",
-    normal_paths=["img1.jpg", "img2.jpg", ...],
-    abnormal_paths=["abnormal1.jpg", "abnormal2.jpg", ...],
+    normal_paths=["img1.jpg", "img2.jpg"],
+    abnormal_paths=["abnormal1.jpg", "abnormal2.jpg"],
     batch_size=16,
-    num_neighbours=[1, 2, 4, 8, 10, 15, 20]
+    num_neighbours=[1, 2, 4, 8, 10, 15, 20],
 )
-
-# Output structure:
-# true_labels: (N,) binary array [0=normal, 1=abnormal]
-# predicted_scores: dict[int -> dict[str -> array]]
-#   Example: predicted_scores[4]['top10_percent'] -> (N,) anomaly scores for k=4, strategy='top10_percent'
 ```
 
-### AMBER v2: Anatomy-Aware Memory Banking
+### AMBER v2 inference
+
+Use `binary_classification_inference_aamb` for the anatomy-aware variant:
 
 ```python
 from src.memory_bank.binary_classification import binary_classification_inference_aamb
 
-# AAMB adds anatomy-aware feature matching + online mask generation
 true_labels, predicted_scores = binary_classification_inference_aamb(
     raddino_checkpoint_path="path/to/rad_dino_vitb14_detrex_ready.pth",
     memory_bank_path="path/to/aamb_memory_bank.pt",
-    normal_paths=["img1.jpg", "img2.jpg", ...],
-    abnormal_paths=["abnormal1.jpg", "abnormal2.jpg", ...],
+    normal_paths=["img1.jpg", "img2.jpg"],
+    abnormal_paths=["abnormal1.jpg", "abnormal2.jpg"],
     batch_size=16,
     num_neighbours=[1, 2, 4, 8, 10, 15, 20],
-    active_anatomies=['Lung', 'Heart']  # Optional: restrict to specific organs
+    active_anatomies=["Lung", "Heart"],
 )
-
-# same output structure as v1
 ```
 
-**Key Differences**:
-- **v1**: Compares patches against all normal features (fast, less accurate)
-- **v2**: Compares patches only against anatomically-matched normal features + generates anatomy masks online
-  - Significantly lower
-  - Better accuracy (anatomy-aware matching)
-  - Optional: `active_anatomies` restricts to specific organs for focused analysis
+### What the inference functions return
 
-### Multiple Aggregation Strategies
+The dataset-level inference APIs return:
 
-AMBER returns predictions for 7 different patch-to-image aggregation strategies:
+- `true_labels`: binary ground-truth labels, where 0 means normal and 1 means abnormal
+- `predicted_scores`: a nested dictionary indexed by `k` and aggregation strategy
 
-```python
-strategies = [
-    "top1",              # Highest anomaly patch
-    "top5",              # Mean of top 5 patches
-    "top10",             # Mean of top 10 patches
-    "top1_percent",      # Mean of top 1% patches
-    "top5_percent",      # Mean of top 5% patches
-    "top10_percent",     # Mean of top 10% patches (recommended)
-    "softmax_weighted"   # Softmax-weighted mean (amplifies strong anomalies)
-]
+For each `k`, the available aggregation strategies are:
 
-# Access scores for specific k and strategy
-for k in num_neighbours:
-    scores_k = predicted_scores[k]  # dict of strategy -> scores
-    top10_scores = scores_k['top10_percent']  # (N,) anomaly scores
-```
+- `top1`
+- `top5`
+- `top10`
+- `top1_percent`
+- `top5_percent`
+- `top10_percent`
+- `softmax_weighted`
 
-### Anomaly Map Visualization
+The single-image helper in [src/memory_bank/anomaly_detection.py](src/memory_bank/anomaly_detection.py) returns the anomaly map and the image-level anomaly score. For publication figures, use [src/memory_bank/utils.py](src/memory_bank/utils.py) and [notebook/anomaly_detection/2.1 AnomalyRadDINOv2 - Inference (Full anats).ipynb](notebook/anomaly_detection/2.1%20AnomalyRadDINOv2%20-%20Inference%20(Full%20anats).ipynb).
 
-```python
-from src.memory_bank.utils import visualize_anomaly_map_aamb
+### Important inference note for AAMB
 
-result = visualize_anomaly_map_aamb(
-    raddino_checkpoint_path="path/to/rad_dino_vitb14_detrex_ready.pth",
-    memory_bank_path="path/to/aamb_memory_bank.pt",
-    image_path="path/to/cxr_image.jpg",
-    annotations_path="path/to/annotations.json",  # COCO format with bounding boxes
-    num_neighbours=4,
-    aggregator_strategy='top10_percent',
-    gamma=1.0,  # Gamma correction for heatmap
-    threshold_method='percentile',
-    threshold_param=99.0,
-    alpha=0.45  # Overlay transparency
-)
+AMBER v2 generates anatomy masks online during inference using the segmentation model from torchxrayvision. This means the inference FLOPs include the segmentation pass, and there is no need to pre-store anatomy masks on disk for inference-time execution.
 
-# Returns: figure, anomaly_map, threshold, filtered_mask, box_stats, image_score
-```
+### Recommended notebooks
 
----
+- [notebook/anomaly_detection/2.0 AnomalyRadDINOv1 - Inference.ipynb](notebook/anomaly_detection/2.0%20AnomalyRadDINOv1%20-%20Inference.ipynb)
+- [notebook/anomaly_detection/2.1 AnomalyRadDINOv2 - Inference (Full anats).ipynb](notebook/anomaly_detection/2.1%20AnomalyRadDINOv2%20-%20Inference%20(Full%20anats).ipynb)
+- [notebook/anomaly_detection/2.2 AnomalyRadDINOv2 - Inference (Ablation studies).ipynb](notebook/anomaly_detection/2.2%20AnomalyRadDINOv2%20-%20Inference%20(Ablation%20studies).ipynb)
 
-## 📈 Evaluation & Analysis
+## Evaluation and Benchmarking
 
-### Quick Evaluation
+The repository includes notebooks for reproducing the paper's analysis stage:
 
-```python
-from sklearn.metrics import roc_auc_score, average_precision_score
-import numpy as np
+- [notebook/anomaly_detection/3.1 MedIAnomaly VinDrCXR - Ablation study analysis.ipynb](notebook/anomaly_detection/3.1%20MedIAnomaly%20VinDrCXR%20-%20Ablation%20study%20analysis.ipynb)
+- [notebook/anomaly_detection/3.2 MedIAnomaly RSNA - Ablation study analysis.ipynb](notebook/anomaly_detection/3.2%20MedIAnomaly%20RSNA%20-%20Ablation%20study%20analysis.ipynb)
+- [notebook/anomaly_detection/3.3 MedIAnomaly benchmarking against baselines.ipynb](notebook/anomaly_detection/3.3%20MedIAnomaly%20benchmarking%20against%20baselines.ipynb)
+- [notebook/anomaly_detection/4.0 BMAD RSNA - Ablation study analysis.ipynb](notebook/anomaly_detection/4.0%20BMAD%20RSNA%20-%20Ablation%20study%20analysis.ipynb)
+- [notebook/anomaly_detection/4.1 BMAD RSNA - Failure case analysis.ipynb](notebook/anomaly_detection/4.1%20BMAD%20RSNA%20-%20Failure%20case%20analysis.ipynb)
 
-# Compute metrics for specific k and strategy
-k, strategy = 4, 'top10_percent'
-scores = predicted_scores[k][strategy]
+The benchmarking outputs used in the paper are stored in [notebook/anomaly_detection/benchmarking/](notebook/anomaly_detection/benchmarking/). Readers can load those files directly to verify the reported results or reproduce the tables and plots without rerunning every experiment from scratch.
 
-auroc = roc_auc_score(true_labels, scores)
-auprc = average_precision_score(true_labels, scores)
+### Typical analysis tasks
 
-print(f"k={k}, strategy={strategy}")
-print(f"AUROC: {auroc:.3f}")
-print(f"AUPRC: {auprc:.3f}")
-```
+- AUROC and AUPRC computation for each `k` and aggregation strategy
+- ROC and precision-recall curve plotting
+- memory-bank and coreset-ratio ablations
+- comparison of AMBER v1 vs AMBER v2
+- failure-case inspection for false positives and false negatives
 
-### Comprehensive Analysis
+## Notebooks Guide
 
-See [Evaluation Notebooks](#notebooks-guide) for:
-- ROC/PR curve visualization
-- Ablation studies (k, strategy impact)
-- Baseline comparisons (reconstruction, self-supervised, memory-based)
-- Failure case analysis
-- Computational complexity reports
+### Stage 0: Data exploration and anatomy analysis
 
----
+- [0.0 AD dataset visualization.ipynb](notebook/anomaly_detection/0.0%20AD%20dataset%20visualization.ipynb): dataset distribution across MedIAnomaly and BMAD
+- [0.1 torchxrayvision - Overview.ipynb](notebook/anomaly_detection/0.1%20torchxrayvision%20-%20Overview.ipynb): small experiment with the anatomy segmentation model
+- [0.3 VinDrCXR anatomical analysis.ipynb](notebook/anomaly_detection/0.3%20VinDrCXR%20anatomical%20analysis.ipynb): IoA analysis between anatomies and diseases, plus anatomy area statistics and supporting plots
 
-## 📓 Notebooks Guide
+### Stage 1: Memory construction
 
-### Stage 0: Dataset & Foundation Model Exploration
-
-| Notebook | Purpose | Key Takeaway |
-|----------|---------|--------------|
-| [0.0 AD Dataset Visualization](notebook/anomaly_detection/0.0%20AD%20dataset%20visualization.ipynb) | Visualize dataset statistics (normal vs abnormal splits across MedIAnomaly/BMAD) | Understand benchmark protocols & class imbalance |
-| [0.1 torchxrayvision Overview](notebook/anomaly_detection/0.1%20torchxrayvision%20-%20Overview.ipynb) | Explore anatomy segmentation model from torchxrayvision | Verify mask quality before memory bank building |
-| [0.2 Anatomy Segmentation](notebook/anomaly_detection/0.2%20torchxrayvision%20-%20Anatomy%20segmentation.ipynb) | Generate binary anatomy masks for all training images | Create `anatomy_masks_dir` for AAMB training |
-| [0.3 VinDrCXR Anatomical Analysis](notebook/anomaly_detection/0.3%20VinDrCXR%20anatomical%20analysis.ipynb) | Compute Intersection-over-Area (IoA) between diseases and anatomies | Justify anatomical region selection (Lung, Heart, etc.) |
-
-### Stage 1: Memory Bank Construction
-
-| Notebook | Purpose | Command |
-|----------|---------|---------|
-| [1.0 AnomalyRadDINOv1 - Build Memory](notebook/anomaly_detection/1.0%20AnomalyRadDINOv1%20-%20Build%20memory.ipynb) | Build AMBER v1 (global bank) on different datasets | `python src/memory_bank/build_memory.py ...` |
-| [1.1 AnomalyRadDINOv2 - Build Memory](notebook/anomaly_detection/1.1%20AnomalyRadDINOv2%20-%20Build%20memory.ipynb) | Build AMBER v2 (AAMB with sub-banks) on different datasets | `python src/memory_bank/build_memory.py --use_aamb ...` |
+- [1.0 AnomalyRadDINOv1 - Build memory.ipynb](notebook/anomaly_detection/1.0%20AnomalyRadDINOv1%20-%20Build%20memory.ipynb)
+- [1.1 AnomalyRadDINOv2 - Build memory.ipynb](notebook/anomaly_detection/1.1%20AnomalyRadDINOv2%20-%20Build%20memory.ipynb)
 
 ### Stage 2: Inference
 
-| Notebook | Purpose | Difference |
-|----------|---------|-----------|
-| [2.0 AnomalyRadDINOv1 - Inference](notebook/anomaly_detection/2.0%20AnomalyRadDINOv1%20-%20Inference.ipynb) | Run inference on validation/test using v1 model | No anatomy masks, single global bank |
-| [2.1 AnomalyRadDINOv2 - Inference (Full)](notebook/anomaly_detection/2.1%20AnomalyRadDINOv2%20-%20Inference%20(Full%20anats).ipynb) | Run inference using all 5 anatomy sub-banks | Online mask generation + anatomy-restricted matching |
-| [2.2 AnomalyRadDINOv2 - Inference (Ablation)](notebook/anomaly_detection/2.2%20AnomalyRadDINOv2%20-%20Inference%20(Ablation%20studies).ipynb) | Ablation: use only specific anatomies (e.g., Lung only) | Isolate contribution of specific organs |
+- [2.0 AnomalyRadDINOv1 - Inference.ipynb](notebook/anomaly_detection/2.0%20AnomalyRadDINOv1%20-%20Inference.ipynb)
+- [2.1 AnomalyRadDINOv2 - Inference (Full anats).ipynb](notebook/anomaly_detection/2.1%20AnomalyRadDINOv2%20-%20Inference%20(Full%20anats).ipynb)
+- [2.2 AnomalyRadDINOv2 - Inference (Ablation studies).ipynb](notebook/anomaly_detection/2.2%20AnomalyRadDINOv2%20-%20Inference%20(Ablation%20studies).ipynb)
 
-### Stage 3: Analysis & Results
+### Stage 3: Analysis and results
 
-| Notebook | Purpose | Output |
-|----------|---------|--------|
-| [3.0 Computational Complexity Report](notebook/anomaly_detection/3.0%20Computational%20complexity%20report.ipynb) | Profile FLOPs and GPU memory across configs | Left: GFLOPs comparison (v1 vs v2). Right: Peak VRAM curves |
-| [3.1 MedIAnomaly VinDrCXR - Ablation](notebook/anomaly_detection/3.1%20MedIAnomaly%20VinDrCXR%20-%20Ablation%20study%20analysis.ipynb) | Systematic ablation: k, strategy, coreset ratio effects | AUROC/AUPRC grids for hyperparameter selection |
-| [3.2 MedIAnomaly RSNA - Ablation](notebook/anomaly_detection/3.2%20MedIAnomaly%20RSNA%20-%20Ablation%20study%20analysis.ipynb) | Same as 3.1 but for RSNA dataset | Different distribution, benchmark-specific insights |
-| [3.3 MedIAnomaly Benchmarking](notebook/anomaly_detection/3.3%20MedIAnomaly%20benchmarking%20against%20baselines.ipynb) | Compare AMBER v1 vs v2 vs reconstruction/SSL baselines | Summary table: AUROC/AUPRC across methods |
-| [4.0 BMAD RSNA - Ablation](notebook/anomaly_detection/4.0%20BMAD%20RSNA%20-%20Ablation%20study%20analysis.ipynb) | Ablation on BMAD protocol (different eval protocol) | Validate generalization across protocols |
-| [4.1 BMAD RSNA - Failure Analysis](notebook/anomaly_detection/4.1%20BMAD%20RSNA%20-%20Failure%20case%20analysis.ipynb) | Analyze false positives & false negatives | Identify failure modes & method limitations |
+- [3.0 Computational complexity report.ipynb](notebook/anomaly_detection/3.0%20Computational%20complexity%20report.ipynb)
+- [3.1 MedIAnomaly VinDrCXR - Ablation study analysis.ipynb](notebook/anomaly_detection/3.1%20MedIAnomaly%20VinDrCXR%20-%20Ablation%20study%20analysis.ipynb)
+- [3.2 MedIAnomaly RSNA - Ablation study analysis.ipynb](notebook/anomaly_detection/3.2%20MedIAnomaly%20RSNA%20-%20Ablation%20study%20analysis.ipynb)
+- [3.3 MedIAnomaly benchmarking against baselines.ipynb](notebook/anomaly_detection/3.3%20MedIAnomaly%20benchmarking%20against%20baselines.ipynb)
+- [4.0 BMAD RSNA - Ablation study analysis.ipynb](notebook/anomaly_detection/4.0%20BMAD%20RSNA%20-%20Ablation%20study%20analysis.ipynb)
+- [4.1 BMAD RSNA - Failure case analysis.ipynb](notebook/anomaly_detection/4.1%20BMAD%20RSNA%20-%20Failure%20case%20analysis.ipynb)
 
-### Pre-computed Results
+## Computational Complexity
 
-Inference results for all 5 runs are stored in [notebook/anomaly_detection/benchmarking/](notebook/anomaly_detection/benchmarking/).
+The complexity notebook [notebook/anomaly_detection/3.0 Computational complexity report.ipynb](notebook/anomaly_detection/3.0%20Computational%20complexity%20report.ipynb) profiles the cost of the v1 and v2 pipelines.
 
-<!-- ```
-benchmarking/
-├── medianomaly_vindrcxr/
-│   ├── v1_n1_validation.npz
-│   ├── v1_n1_test.npz
-│   ├── v2_aamb_n1_validation.npz
-│   └── v2_aamb_n1_test.npz
-├── medianomaly_rsna/
-│   └── ...
-└── bmad_rsna/
-    └── ...
-``` -->
-<!-- 
-Load and verify results:
+For AMBER v1, the main cost comes from RadDINO feature extraction plus nearest-neighbor retrieval over the global memory bank.
 
-```python
-import numpy as np
+For AMBER v2, the inference cost includes the same backbone and retrieval stages, plus the online anatomy-segmentation step used to generate masks in-flight. This means v2 improves anatomical consistency but does add extra FLOPs at inference time.
 
-results = np.load("benchmarking/medianomaly_vindrcxr/v1_n1_test.npz")
-true_labels = results['true_labels']  # (N,)
-k1_top10_scores = results['k_1_top10_percent']  # (N,) anomaly scores for k=1, strategy='top10_percent'
+When comparing methods, keep the following in mind:
 
-print(f"Labels: {true_labels}")
-print(f"Scores shape: {k1_top10_scores.shape}") -->
-<!-- ``` -->
+- memory-bank coreset selection reduces search cost as the subsampling ratio decreases
+- AAMB reduces anatomical mismatch but introduces segmentation overhead
+- the reported complexity should always be interpreted together with the chosen `k` values and aggregation strategy
 
-<!-- ---
+## Citation
 
-## 📊 Results
+If you use AMBER in your research, please cite our paper. A BibTeX entry will be added in the final release version of the manuscript.
 
-### Few-shot Performance Summary
+## License
 
-| Setting | Method | Backbone | AUROC (%) | AUPRC (%) |
-|---------|--------|----------|-----------|-----------|
-| MedIAnomaly VinDrCXR (N=1) | AMBER v1 | RadDINO ViT-B/16 | 71.2 ± 2.3 | 68.4 ± 3.1 |
-| MedIAnomaly VinDrCXR (N=1) | **AMBER v2 (AAMB)** | RadDINO ViT-B/16 | **78.5 ± 1.8** | **76.9 ± 2.2** |
-| MedIAnomaly VinDrCXR (N=20) | AMBER v1 | RadDINO ViT-B/16 | 85.3 ± 1.1 | 84.2 ± 1.4 |
-| MedIAnomaly VinDrCXR (N=20) | **AMBER v2 (AAMB)** | RadDINO ViT-B/16 | **89.7 ± 0.9** | **88.6 ± 1.1** |
-| MedIAnomaly RSNA (N=1) | AMBER v1 | RadDINO ViT-B/16 | 68.1 ± 2.8 | 64.3 ± 3.5 |
-| MedIAnomaly RSNA (N=1) | **AMBER v2 (AAMB)** | RadDINO ViT-B/16 | **75.2 ± 2.1** | **71.8 ± 2.9** |
-| BMAD RSNA | AMBER v1 | RadDINO ViT-B/16 | 82.4 ± 1.5 | 80.1 ± 1.8 |
-| BMAD RSNA | **AMBER v2 (AAMB)** | RadDINO ViT-B/16 | **86.9 ± 1.2** | **85.3 ± 1.5** |
+This project is released under the MIT License. See [LICENSE](LICENSE) for details.
 
-**Key Findings**:
-- AAMB consistently improves v1 baseline by 5-10% AUROC across protocols
-- Strongest gains in low-shot settings (N=1, 5) where anatomy awareness matters most
-- Anatomy-specific retrieval reduces cross-anatomical semantic mismatch
+## Contact
 
-See [Notebooks 3.1-4.1](#notebooks-guide) for detailed results, confidence intervals, and protocol-specific analysis.
-
---- -->
-
-<!-- ## ⚡ Computational Complexity
-
-### Memory & Inference Cost Analysis
-
-See [Notebook 3.0](notebook/anomaly_detection/3.0%20Computational%20complexity%20report.ipynb) for empirical profiling.
-
-**Peak GPU Memory** (Coreset Selection Phase):
-
-```
-Config: N=1000 normal images, p=0.05 coreset ratio
-Method       Peak VRAM    Threshold (T4 GPU ~15GB)
-─────────────────────────────────────────────────
-AMBER v1:    ~8-10 GB     N ≤ 2000 before OOM
-AMBER v2:    ~6-8 GB      N ≤ 2500 before OOM  (30% savings via region-wise compression)
-```
-
-**Inference Cost** (per test image):
-
-```
-Component          GFLOPs    Notes
-──────────────────────────────────────────
-RadDINO backbone   ~450      Frozen, same for v1/v2
-K-NN (v1):         50-200    Varies with memory bank size
-K-NN (v2):         40-160    ~20-30% less due to anatomy restriction
-PSPNet masks:      +80       AAMB only, online generation
-Total (v1):        500-650   GFLOPs per image
-Total (v2):        610-840   GFLOPs per image
-```
-
-**Mitigation Strategies**:
-- Use `--subsampling_ratio 0.05-0.1` for aggressive memory compression
-- Multi-GPU inference via `concurrent.futures.ThreadPoolExecutor` (see Notebook 2.0)
-- Precompute anatomy masks offline if evaluating many images with AAMB
-
----
-
-## 🔄 Full Reproduction Pipeline
-
-### Example: MedIAnomaly VinDrCXR (N=5)
-
-```bash
-# 1. Download dataset & anatomy masks from Kaggle
-# Dataset: https://www.kaggle.com/datasets/thebeo182004/medanomaly-vindrcxr
-# Anatomy: https://www.kaggle.com/code/thebeo182004/medianomaly-vindrcxr-anatomy-maps
-
-# 2. Install AMBER
-git clone ...
-cd AMBER
-uv sync
-cd detrex/detectron2 && uv pip install -e . && cd ../..
-cd detrex && uv pip install -e . && cd ..
-cd anomalib && uv pip install -e . && cd ..
-
-# 3. Build memory banks
-# v1: Global bank
-python src/memory_bank/build_memory.py \
-  --raddino_checkpoint_path "path/to/rad_dino_vitb14_detrex_ready.pth" \
-  --train_normal_data_dir "path/to/medianomaly_vindrcxr/train_normal" \
-  --save_path "memory_banks/vindrcxr_v1_n5.pt" \
-  --normal_num 5 \
-  --subsampling_ratio 0.1
-
-# v2: AAMB with sub-banks
-python src/memory_bank/build_memory.py \
-  --raddino_checkpoint_path "path/to/rad_dino_vitb14_detrex_ready.pth" \
-  --train_normal_data_dir "path/to/medianomaly_vindrcxr/train_normal" \
-  --anatomy_dir "path/to/anatomy_masks/train_normal" \
-  --save_path "memory_banks/vindrcxr_v2_aamb_n5.pt" \
-  --normal_num 5 \
-  --subsampling_ratio 0.1 \
-  --use_aamb
-
-# 4. Run inference (see Notebooks 2.0-2.2 for detailed examples)
-# Results → benchmarking/ directory
-
-# 5. Evaluate & visualize (see Notebooks 3.1-4.1)
-```
-
----
-
-## 🎓 Understanding the Architecture
-
-### Memory Bank Organization
-
-```
-AMBER v1 (Global Bank):
-┌─────────────────────────────┐
-│  Normal Reference Features  │  (all patches from all anatomies)
-│  [Z_1, Z_2, ..., Z_M]       │  Size: M patches × 768 dim
-│  ↓ K-Center Greedy (p=0.1)  │
-│  [Z_c1, Z_c2, ..., Z_ck]    │  Compressed: 0.1M patches × 768 dim
-└─────────────────────────────┘
-
-Query patch (e.g., from lung):
-  → Compute k-NN distances to ALL patches
-  → Highest distance = anomaly score
-  Problem: May match against heart/mediastinum features ✗
-
-───────────────────────────────────────────────────────────────
-
-AMBER v2 with AAMB (Anatomy-Aware Sub-Banks):
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
-│  Clavicle    │ │    Lung      │ │    Heart     │ │  Diaphragm   │ │  Mediastinum     │
-│    Bank      │ │    Bank      │ │    Bank      │ │    Bank      │ │    Bank          │
-├──────────────┤ ├──────────────┤ ├──────────────┤ ├──────────────┤ ├──────────────────┤
-│ [Z_c1, ...] │ │ [Z_l1, ...] │ │ [Z_h1, ...] │ │ [Z_d1, ...] │ │ [Z_m1, ...]      │
-│ 1.2K patch  │ │ 9.5K patch  │ │ 2.3K patch  │ │ 4.1K patch  │ │ 1.8K patch       │
-│     ↓        │ │     ↓        │ │     ↓        │ │     ↓        │ │     ↓            │
-│ 120 core    │ │ 950 core    │ │ 230 core    │ │ 410 core    │ │ 180 core         │
-│(p=0.1)      │ │ (p=0.1)     │ │ (p=0.1)     │ │ (p=0.1)     │ │ (p=0.1)          │
-└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────────┘
-
-Query patch (e.g., from lung):
-  1. Generate anatomy mask → patch belongs to Lung ✓
-  2. Compute k-NN only against Lung Bank
-  3. Only matches valid anatomical references ✓
-  Result: Better anomaly scores, ~30% less memory, ~20-30% fewer FLOPs
-```
-
----
-
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-**Issue 1: RadDINO checkpoint incompatible with Detrex**
-
-```
-Error: Expected ViT-B/16 but got ViT-B/14
-```
-
-**Solution**: Use converted checkpoint from [Kaggle](https://www.kaggle.com/models/thebeo182004/raddino-vitb14-topad16) or convert locally:
-
-```python
-from src.utils import convert_rad_dino_for_detrex
-
-convert_rad_dino_for_detrex(
-    backbone_safetensor_path="microsoft_rad_dino_vitb14.safetensors",
-    output_pth="rad_dino_vitb14_detrex_ready.pth"
-)
-```
-
-**Issue 2: OOM during coreset selection with large N**
-
-```
-RuntimeError: CUDA out of memory
-```
-
-**Solution**: Use smaller `--subsampling_ratio` or reduce `--batch_size`:
-
-```bash
-# Instead of: --subsampling_ratio 0.1 --batch_size 32
-# Use:
-python src/memory_bank/build_memory.py \
-  ... \
-  --subsampling_ratio 0.05 \
-  --batch_size 8
-```
-
-**Issue 3: Multi-GPU inference fails**
-
-```
-CUDA device mismatch or ThreadPoolExecutor error
-```
-
-**Solution**: Ensure both GPUs are visible and manually handle synchronization:
-
-```bash
-export CUDA_VISIBLE_DEVICES=0,1
-
-python -c "
-import torch
-print(f'Visible GPUs: {torch.cuda.device_count()}')
-print(f'GPU 0: {torch.cuda.get_device_name(0)}')
-print(f'GPU 1: {torch.cuda.get_device_name(1)}')
-"
-```
-
----
-
-## 📚 Citation
-
-If you use AMBER in your research, please cite:
-
-```bibtex
-@article{amber2024,
-  title={AMBER: Anatomy-aware Memory Banks for Efficient Radiographic Anomaly Detection},
-  author={Nguyen, Huu The and ...},
-  journal={arXiv preprint arXiv:2406.xxxxx},
-  year={2024}
-}
-```
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! For major changes, please open an issue first to discuss proposed changes.
-
----
-
-## 📞 Contact
-
-For questions or issues:
-- Open a GitHub issue
-- Email: your.email@example.com
-
----
-
-## Acknowledgments
-
-- **RadDINO**: Microsoft's medical foundation model ([Hugging Face](https://huggingface.co/microsoft/rad-dino))
-- **Datasets**: [MedIAnomaly](https://www.sciencedirect.com/science/article/abs/pii/S1361841525000489), [BMAD](https://openaccess.thecvf.com/content/CVPR2024W/VAND/papers/Bao_BMAD_Benchmarks_for_Medical_Anomaly_Detection_CVPRW_2024_paper.pdf)
-- **Detrex & Detectron2**: Facebook Research (now Meta)
-
----
-
-**Last Updated**: July 2026  
-**Version**: 1.0 -->
+For issues, questions, or reproducibility questions, open a GitHub issue in this repository.
